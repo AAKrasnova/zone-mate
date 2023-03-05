@@ -5,6 +5,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aakrasnova/zone-mate/service"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -56,6 +57,12 @@ func (b *Bot) handleMsg(msg *tgbotapi.Message) {
 		b.fromMyTime(msg)
 	case "from_utc":
 		b.fromUTC(msg)
+	case "partner_time":
+		b.fromPartnerTime(msg)
+	case "partner_utc":
+		b.fromPartnerUTC(msg)
+	case "admins_time":
+		b.currentTimeOfAdmins(msg)
 	case "start":
 		b.start(msg)
 	}
@@ -65,8 +72,118 @@ func (b *Bot) start(msg *tgbotapi.Message) {
 	b.replyWithText(msg, "I am working")
 }
 
-func (b *Bot) fromMyTime(msg *tgbotapi.Message) {
+func (b *Bot) currentTimeOfAdmins(msg *tgbotapi.Message) {
+	chatID := msg.Chat.ID
+	chCng := tgbotapi.ChatConfig{ChatID: chatID}
 
+	chatAdministratorsConfig := tgbotapi.ChatAdministratorsConfig{chCng}
+	administrators, err := b.bot.GetChatAdministrators(chatAdministratorsConfig)
+	if err != nil {
+		b.replyError(msg, "Error while getting administrators", err)
+	}
+	memberIDs := make(map[int64]int64)
+	memberUsernames := make(map[int64]string)
+	memberOffsets := make(map[int64]int)
+
+	message := ""
+	for _, chatAdministrator := range administrators {
+		userID := chatAdministrator.User.ID
+		memberIDs[userID] = userID
+		memberUsernames[userID] = chatAdministrator.User.UserName
+		memberOffsets[userID], err = b.s.GetOffsetByUserID(userID)
+		if err != nil {
+			continue
+		}
+
+		durationString := strconv.Itoa(memberOffsets[userID]) + "h"
+		duration, err := time.ParseDuration(durationString)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		memberCurrTime := time.Now().Add(duration)
+		message += memberUsernames[userID] + " " + memberCurrTime.Format("02.01.2006 15:04")
+	}
+	b.replyWithText(msg, message)
+
+}
+
+func (b *Bot) fromMyTime(msg *tgbotapi.Message) {
+	t, err := parseDateTime(strings.TrimSpace(msg.CommandArguments()))
+	if err != nil {
+		b.replyError(msg, "Error while parsing your date + time", err)
+		b.send(tgbotapi.NewMessage(373512635, fmt.Sprintf("Пользователь попробовал всунуть в дату: %v", strings.TrimSpace(msg.CommandArguments()))))
+	}
+
+	offset := calculateOffset(t)
+	err = b.s.AddWithUTCOffset(msg.From.ID, msg.From.UserName, offset)
+	if err != nil {
+		b.replyError(msg, "Error while saving your offset", err)
+		return
+	}
+	b.replyWithText(msg, "Your offset saved "+strconv.Itoa(offset))
+}
+
+func (b *Bot) fromPartnerTime(msg *tgbotapi.Message) {
+	parts := strings.SplitN(strings.TrimSpace(msg.CommandArguments()), " ", 2)
+	if len(parts) != 2 {
+		fmt.Println("Error parsing input string")
+		return
+	}
+	userName := parts[0]
+	datestring := parts[1]
+
+	t, err := parseDateTime(datestring)
+	if err != nil {
+		b.replyError(msg, "Error while parsing your date + time", err)
+		b.send(tgbotapi.NewMessage(373512635, fmt.Sprintf("Пользователь попробовал всунуть в дату: %v", strings.TrimSpace(msg.CommandArguments()))))
+	}
+
+	err = b.s.AddWithUTCOffsetOnlyUsername(userName, calculateOffset(t))
+	if err != nil {
+		b.replyError(msg, "Error while saving your offset", err)
+		return
+	}
+	b.replyWithText(msg, userName+"'s offset saved "+strconv.Itoa(calculateOffset(t)))
+}
+
+func calculateOffset(t time.Time) int {
+	offsetH := int(t.Hour() - time.Now().Hour())
+	//TODO: сделать имплементацию с половинчатыми часами
+	return offsetH
+}
+
+func parseDateTime(input string) (time.Time, error) {
+	//почему-то не работает
+	layouts := []string{
+		"2006-01-02 15:04",
+		"Jan 2, 2006  15:04",
+		"02.01.2006  15:04",
+		"2.01.2006  15:04",
+		"2.01.06  15:04",
+		"02.01.2006  15.04",
+		"2.01.2006  15.04",
+		"2.01.06  15.04",
+		"02/01/2006  15.04",
+		"2/01/2006  15.04",
+		"2/01/06  15.04",
+		"02/01/2006  15:04",
+		"2/01/2006  15:04",
+		"2/01/06  15:04",
+		"01/02/2006  15:04",
+		"01/02/06  15:04",
+		"01/2/06  15:04",
+	}
+
+	var t time.Time
+	var err error
+	for _, layout := range layouts {
+		t, err = time.Parse(layout, input)
+		if err == nil {
+			break
+		}
+	}
+	return t, err
 }
 
 func (b *Bot) fromUTC(msg *tgbotapi.Message) {
@@ -75,19 +192,40 @@ func (b *Bot) fromUTC(msg *tgbotapi.Message) {
 		b.replyWithText(msg, "Wrong offset, enter number from range -12 to 12")
 		return
 	}
-	err = b.s.AddWithUTCOffset(msg.From.ID, offset)
+	err = b.s.AddWithUTCOffset(msg.From.ID, msg.From.UserName, offset)
 	if err != nil {
 		b.replyError(msg, "Error while saving your offset", err)
 		return
 	}
-	b.replyWithText(msg, "Your offset saved")
+	b.replyWithText(msg, "Your offset saved "+strconv.Itoa(offset))
+}
+
+func (b *Bot) fromPartnerUTC(msg *tgbotapi.Message) {
+	parts := strings.SplitN(strings.TrimSpace(msg.CommandArguments()), " ", 2)
+	if len(parts) != 2 {
+		fmt.Println("Error parsing input string")
+		return
+	}
+	userName := parts[0]
+	UTCoffset := parts[1]
+
+	offset, err := strconv.Atoi(UTCoffset)
+	if err != nil {
+		b.replyWithText(msg, "Wrong offset, enter number from range -12 to 12")
+		return
+	}
+	err = b.s.AddWithUTCOffsetOnlyUsername(userName, offset)
+	if err != nil {
+		b.replyError(msg, "Error while saving your offset", err)
+		return
+	}
+	b.replyWithText(msg, userName+"'s offset saved "+strconv.Itoa(offset))
 }
 
 func (b *Bot) replyWithText(to *tgbotapi.Message, text string) {
 	msg := tgbotapi.NewMessage(to.Chat.ID, text)
 	msg.ReplyToMessageID = to.MessageID
 	msg.ParseMode = tgbotapi.ModeHTML
-	// msg.ParseMode = tgbotapi.ModeMarkdownV2
 	b.send(msg)
 }
 
