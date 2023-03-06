@@ -148,7 +148,7 @@ func (b *Bot) fromPartnerTime(msg *tgbotapi.Message) {
 }
 
 func calculateOffset(t time.Time) int {
-	offsetH := int(t.Hour() - time.Now().Hour())
+	offsetH := int(t.Hour() - time.Now().UTC().Hour())
 	//TODO: сделать имплементацию с половинчатыми часами
 	return offsetH
 }
