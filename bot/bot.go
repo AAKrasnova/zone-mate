@@ -63,6 +63,8 @@ func (b *Bot) handleMsg(msg *tgbotapi.Message) {
 		b.fromPartnerUTC(msg)
 	case "admins_time":
 		b.currentTimeOfAdmins(msg)
+	case "this_in_admins_time":
+		b.MyTimeInTimeOfAdmins(msg)
 	case "start":
 		b.start(msg)
 	}
@@ -70,6 +72,48 @@ func (b *Bot) handleMsg(msg *tgbotapi.Message) {
 
 func (b *Bot) start(msg *tgbotapi.Message) {
 	b.replyWithText(msg, "I am working")
+}
+
+func (b *Bot) MyTimeInTimeOfAdmins(msg *tgbotapi.Message) {
+	t, err := parseDateTime(strings.TrimSpace(msg.CommandArguments()))
+	if err != nil {
+		b.replyError(msg, "Error while parsing your date + time", err)
+		b.send(tgbotapi.NewMessage(373512635, fmt.Sprintf("Пользователь попробовал всунуть в дату: %v", strings.TrimSpace(msg.CommandArguments()))))
+	}
+
+	chatID := msg.Chat.ID
+	chCng := tgbotapi.ChatConfig{ChatID: chatID}
+
+	chatAdministratorsConfig := tgbotapi.ChatAdministratorsConfig{chCng}
+	administrators, err := b.bot.GetChatAdministrators(chatAdministratorsConfig)
+	if err != nil {
+		b.replyError(msg, "Error while getting administrators", err)
+	}
+	memberIDs := make(map[int64]int64)
+	memberUsernames := make(map[int64]string)
+	memberOffsets := make(map[int64]int)
+
+	message := ""
+	for _, chatAdministrator := range administrators {
+		userID := chatAdministrator.User.ID
+		memberIDs[userID] = userID
+		memberUsernames[userID] = chatAdministrator.User.UserName
+		memberOffsets[userID], err = b.s.GetOffsetByUserID(userID)
+		if err != nil {
+			continue
+		}
+
+		durationString := strconv.Itoa(memberOffsets[userID]) + "h"
+		duration, err := time.ParseDuration(durationString)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		memberCurrTime := time.Now().Add(duration)
+		message += memberUsernames[userID] + " " + memberCurrTime.Format("02.01.2006 15:04")
+	}
+	b.replyWithText(msg, message)
+
 }
 
 func (b *Bot) currentTimeOfAdmins(msg *tgbotapi.Message) {
@@ -157,22 +201,38 @@ func parseDateTime(input string) (time.Time, error) {
 	//почему-то не работает
 	layouts := []string{
 		"2006-01-02 15:04",
-		"Jan 2, 2006  15:04",
-		"02.01.2006  15:04",
-		"2.01.2006  15:04",
-		"2.01.06  15:04",
-		"02.01.2006  15.04",
-		"2.01.2006  15.04",
-		"2.01.06  15.04",
-		"02/01/2006  15.04",
-		"2/01/2006  15.04",
-		"2/01/06  15.04",
-		"02/01/2006  15:04",
-		"2/01/2006  15:04",
-		"2/01/06  15:04",
-		"01/02/2006  15:04",
-		"01/02/06  15:04",
-		"01/2/06  15:04",
+		"Jan 2, 2006 15:04",
+		"02.01.2006 15:04",
+		"2.01.2006 15:04",
+		"2.01.06 15:04",
+		"02.01.2006 15.04",
+		"2.01.2006 15.04",
+		"2.01.06 15.04",
+		"02/01/2006 15.04",
+		"2/01/2006 15.04",
+		"2/01/06 15.04",
+		"02/01/2006 15:04",
+		"2/01/2006 15:04",
+		"2/01/06 15:04",
+		"01/02/2006 15:04",
+		"01/02/06 15:04",
+		"01/2/06 15:04",
+		"15:04 2006-01-02",
+		"15:04 02.01.2006",
+		"15:04 2.01.2006",
+		"15:04 2.01.06",
+		"15.04 02.01.2006",
+		"15.04 2.01.2006",
+		"15.04 2.01.06",
+		"15.04 02/01/2006",
+		"15.04 2/01/2006",
+		"15.04 2/01/06",
+		"15:04 02/01/2006",
+		"15:04 2/01/2006",
+		"15:04 2/01/06",
+		"15:04 01/02/2006",
+		"15:04 01/02/06",
+		"15:04 01/2/06",
 	}
 
 	var t time.Time
