@@ -75,11 +75,21 @@ func (b *Bot) start(msg *tgbotapi.Message) {
 }
 
 func (b *Bot) MyTimeInTimeOfAdmins(msg *tgbotapi.Message) {
+	senderOffset, err := b.s.GetOffsetByUserID(msg.From.ID)
+	senderCurrentDate := time.Now().UTC().Add(hoursToDuration(senderOffset))
+	if err != nil {
+		b.replyError(msg, "error while getting YOUR offset", err)
+	}
+
 	t, err := parseDateTime(strings.TrimSpace(msg.CommandArguments()))
 	if err != nil {
+		t, err = parseTime(strings.TrimSpace(msg.CommandArguments()))
+		t, _ = combineDateTime(senderCurrentDate, t)
 		b.replyError(msg, "Error while parsing your date + time", err)
 		b.send(tgbotapi.NewMessage(373512635, fmt.Sprintf("Пользователь попробовал всунуть в дату: %v", strings.TrimSpace(msg.CommandArguments()))))
 	}
+
+	utcTime := t.Add(hoursToDuration(senderOffset))
 
 	chatID := msg.Chat.ID
 	chCng := tgbotapi.ChatConfig{ChatID: chatID}
@@ -109,11 +119,16 @@ func (b *Bot) MyTimeInTimeOfAdmins(msg *tgbotapi.Message) {
 			fmt.Println(err)
 			return
 		}
-		memberCurrTime := time.Now().Add(duration)
-		message += memberUsernames[userID] + " " + memberCurrTime.Format("02.01.2006 15:04")
+		memberTime := utcTime.Add(duration)
+		message += memberUsernames[userID] + " " + memberTime.Format("02.01.2006 15:04")
 	}
 	b.replyWithText(msg, message)
 
+}
+
+func hoursToDuration(hours int) time.Duration {
+	duration := time.Duration(hours) * time.Hour
+	return duration
 }
 
 func (b *Bot) currentTimeOfAdmins(msg *tgbotapi.Message) {
@@ -197,6 +212,20 @@ func calculateOffset(t time.Time) int {
 	return offsetH
 }
 
+func combineDateTime(date time.Time, timet time.Time) (time.Time, error) {
+	// Combine currentDate and timeOfDay to create a new time.Time variable
+	combinedDateTime := time.Date(
+		date.Year(),
+		date.Month(),
+		date.Day(),
+		timet.Hour(),
+		timet.Minute(),
+		0, 0, date.Location(),
+	)
+
+	return combinedDateTime, nil
+}
+
 func parseDateTime(input string) (time.Time, error) {
 	//почему-то не работает
 	layouts := []string{
@@ -233,6 +262,24 @@ func parseDateTime(input string) (time.Time, error) {
 		"15:04 01/02/2006",
 		"15:04 01/02/06",
 		"15:04 01/2/06",
+	}
+
+	var t time.Time
+	var err error
+	for _, layout := range layouts {
+		t, err = time.Parse(layout, input)
+		if err == nil {
+			break
+		}
+	}
+	return t, err
+}
+
+func parseTime(input string) (time.Time, error) {
+	layouts := []string{
+		"15:04",
+		"15.04",
+		"15-04",
 	}
 
 	var t time.Time
